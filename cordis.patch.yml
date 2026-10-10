@@ -1,0 +1,9 @@
+# Follow-up Suggestions bundle patch: inserts the plugin row into the profile
+# roster. The single row mounts BOTH halves: the host side registers the
+# `/api/dsh-followup-suggest` route (it reads the session's own request header
+# for the selected provider/model and streams one suggestion call), while the
+# `dsh.client` declaration in package.json makes the browser half (exports
+# "./client") render the chips under the session's last completed reply.
+- insert:
+    - id: followup-suggestions
+      name: 'dsh-followup-suggestions'

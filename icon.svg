@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Follow-up Suggestions">
+  <rect width="64" height="64" rx="14" fill="#4D6BFE"/>
+  <path d="M14 20a6 6 0 0 1 6-6h24a6 6 0 0 1 6 6v14a6 6 0 0 1-6 6H27l-9 8v-8h-4z" fill="#fff" opacity=".95"/>
+  <g fill="#4D6BFE">
+    <rect x="20" y="21" width="20" height="3" rx="1.5"/>
+    <rect x="20" y="28" width="14" height="3" rx="1.5"/>
+  </g>
+  <g fill="#fff">
+    <rect x="20" y="39" width="11" height="7" rx="3.5" opacity=".9"/>
+    <rect x="34" y="39" width="14" height="7" rx="3.5" opacity=".7"/>
+    <rect x="20" y="49" width="18" height="7" rx="3.5" opacity=".5"/>
+  </g>
+</svg>

@@ -1,0 +1,18 @@
+# Build and dependency output
+node_modules/
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Logs and local state
+*.log
+npm-debug.log*
+.dsh-tmp/
+*.local
+
+# Editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

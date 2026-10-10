@@ -1,0 +1,59 @@
+{
+  "name": "dsh-followup-suggestions",
+  "version": "1.0.0",
+  "description": "Follow-up suggestion chips under a DSH session's last completed reply, generated with that session's own selected model.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.1.7-rc.2"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "dsh-client-plugin",
+    "deepseek-harness",
+    "deepseek",
+    "follow-up-suggestions",
+    "chat-ui",
+    "productivity"
+  ],
+  "author": "YubaiLoving",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YubaiLoving/dsh-followup-suggestions.git"
+  },
+  "homepage": "https://github.com/YubaiLoving/dsh-followup-suggestions#readme",
+  "bugs": {
+    "url": "https://github.com/YubaiLoving/dsh-followup-suggestions/issues"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": ">=0.1.7-rc.2",
+    "react": "^18.2.0"
+  }
+}
