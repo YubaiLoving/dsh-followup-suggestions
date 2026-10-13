@@ -1,6 +1,6 @@
 {
   "name": "dsh-followup-suggestions",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Follow-up suggestion chips under a DSH session's last completed reply, generated with that session's own selected model.",
   "type": "module",
   "main": "lib/index.js",

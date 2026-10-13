@@ -200,6 +200,47 @@ console.log("host half");
 }
 
 {
+	// A refresh must reach the model again and replace the settled answer for the
+	// key it was handed instead of replaying the batch already cached.
+	const { ctx, registered, calls } = hostHarness({
+		plan: [
+			{ reply: "第一条\n第二条" },
+			{ reply: "新的一条\n新的二条" }
+		]
+	});
+	host.apply(ctx, {});
+	const spec = registered[0];
+	const body = JSON.stringify({ sessionId: "s1", turn: 3, seq: 30 });
+	await callRoute(spec, body);
+	const refreshed = await (await callRoute(spec, JSON.stringify({ sessionId: "s1", turn: 3, seq: 30, refresh: true }))).json();
+	check("a refresh calls the model again", calls.length === 2, `got ${calls.length}`);
+	check("a refresh answers with the new lines", same(refreshed.items, ["新的一条", "新的二条"]), JSON.stringify(refreshed.items));
+	const after = await (await callRoute(spec, body)).json();
+	check("a refresh replaces the settled answer", same(after.items, ["新的一条", "新的二条"]), JSON.stringify(after.items));
+	check("the replaced answer costs no further call", calls.length === 2, `got ${calls.length}`);
+	const loose = await (await callRoute(spec, JSON.stringify({ sessionId: "s1", turn: 3, seq: 30, refresh: "yes" }))).json();
+	check("a non-boolean refresh is not a refresh", loose.items.length === 2 && calls.length === 2, `n=${calls.length} items=${JSON.stringify(loose.items)}`);
+}
+
+{
+	// The browser also busts the key, so a refresh regenerates even against a Host
+	// build that never heard of the flag: the synthetic sequence alone misses.
+	const { ctx, registered, calls } = hostHarness({
+		plan: [
+			{ reply: "原来的一\n原来的二" },
+			{ reply: "换过的一\n换过的二" }
+		]
+	});
+	host.apply(ctx, {});
+	const spec = registered[0];
+	await callRoute(spec, JSON.stringify({ sessionId: "s1", turn: 3, seq: 30 }));
+	const busted = await (await callRoute(spec, JSON.stringify({ sessionId: "s1", turn: 3, seq: 1000000030 }))).json();
+	check("a synthetic sequence alone misses the settled answer", calls.length === 2, `got ${calls.length}`);
+	check("the synthetic-sequence request answers with the new lines", same(busted.items, ["换过的一", "换过的二"]), JSON.stringify(busted.items));
+	check("the synthetic sequence does not disturb the real key", same((await (await callRoute(spec, JSON.stringify({ sessionId: "s1", turn: 3, seq: 30 }))).json()).items, ["原来的一", "原来的二"]), "the real key moved");
+}
+
+{
 	const { ctx, registered, calls } = hostHarness();
 	host.apply(ctx, {});
 	const body = JSON.stringify({ sessionId: "s1", turn: 5, seq: 50 });
@@ -370,6 +411,11 @@ function buttons(node, out = []) {
 	return out;
 }
 
+/** Collect the suggestion chips in one tree, in render order (the refresh button is not one). */
+function chips(node) {
+	return buttons(node).filter((button) => button.props?.className === "dshfu_chip");
+}
+
 /** Fake `useChat` seat: applies the seat's selector to a snapshot with one turn order. */
 function chatSeat(order) {
 	return (selector) => selector({
@@ -436,6 +482,33 @@ const actions = {
 		draftCalls.push(text);
 	}
 };
+/** Composer DOM interactions recorded by the click-to-focus path. */
+let focusCalls = [];
+let selectionCalls = [];
+/**
+ * Install a minimal composer DOM: one Session-scoped conversation content node
+ * whose contenteditable answers the plugin's lookup. The bundle takes `window`
+ * as a parameter, so the selection stand-in goes onto the same window stub the
+ * loader was handed.
+ */
+function installComposerDom() {
+	const input = {
+		focus: (options) => focusCalls.push(options ?? {})
+	};
+	globalThis.document = {
+		querySelector(selector) {
+			return selector.includes("data-conversation-session") ? { querySelector: () => input } : null;
+		},
+		createRange: () => ({
+			selectNodeContents() {},
+			collapse() {}
+		})
+	};
+	windowStub.getSelection = () => ({
+		removeAllRanges: () => selectionCalls.push("remove"),
+		addRange: () => selectionCalls.push("add")
+	});
+}
 /** Mounted seat of the current case; `mountSeat` replaces it. */
 let seatHarness = null;
 /** Mount one seat render under a fresh harness. */
@@ -450,7 +523,9 @@ const seat = (turn, order, overrides = {}) => ({
 	inputActions: actions,
 	t: (key) => ({
 		label: "为你推荐",
-		insert: "填入输入框"
+		insert: "填入输入框",
+		refresh: "换一批推荐",
+		refreshing: "正在换一批推荐"
 	})[key] ?? key,
 	...overrides
 });
@@ -514,19 +589,26 @@ globalThis.fetch = async (url, init) => {
 	mountSeat(seat({ turn: 2, status: "closed" }, [1, 2]));
 	const placeholder = seatHarness.getTree();
 	check("the newest closed turn shows a placeholder while the Host answers", placeholder !== null, String(placeholder));
-	check("the placeholder holds three pills and no chip", texts(placeholder).includes("为你推荐") && buttons(placeholder).length === 0, JSON.stringify(texts(placeholder)));
+	check("the placeholder holds three pills and no chip", texts(placeholder).includes("为你推荐") && chips(placeholder).length === 0, JSON.stringify(texts(placeholder)));
+	check("the label row carries one refresh button", buttons(placeholder).length === 1 && buttons(placeholder)[0].props?.["aria-label"] === "换一批推荐", JSON.stringify(buttons(placeholder).map((button) => button.props?.["aria-label"])));
+	check("refresh is disabled while the first batch is loading", buttons(placeholder)[0].props?.disabled === true, String(buttons(placeholder)[0].props?.disabled));
 	await flush();
 	const tree = seatHarness.getTree();
 	check("chips appear once the Host answers", tree !== null, String(tree));
 	check("the placeholder is gone", tree?.props?.children?.[1]?.props?.children?.length === 2, JSON.stringify(texts(tree)));
 	check("the label is rendered", texts(tree).includes("为你推荐"), JSON.stringify(texts(tree)));
-	check("one chip per returned suggestion", buttons(tree).length === 2, String(buttons(tree).length));
+	check("the label row sits above the list", tree?.props?.children?.[0]?.props?.className === "dshfu_head", String(tree?.props?.children?.[0]?.props?.className));
+	check("one chip per returned suggestion", chips(tree).length === 2, String(chips(tree).length));
 	check("chip order follows the Host", same(texts(tree).slice(1), ["继续解释细节", "给一个类比"]), JSON.stringify(texts(tree)));
 	check("the request carries the session and turn", same(fetchCalls.at(-1)?.body, { sessionId: "s1", turn: 2 }), JSON.stringify(fetchCalls.at(-1)?.body));
 	check("the request hits the Host route", fetchCalls.at(-1)?.url === "/api/dsh-followup-suggest", String(fetchCalls.at(-1)?.url));
+	check("refresh is enabled once chips are shown", buttons(tree)[0].props?.disabled === false, String(buttons(tree)[0].props?.disabled));
 
-	buttons(tree)[1].props.onClick();
+	installComposerDom();
+	chips(tree)[1].props.onClick();
 	check("a click fills the draft instead of sending", same(draftCalls, ["给一个类比"]), JSON.stringify(draftCalls));
+	check("a click hands the keyboard to the composer", same(focusCalls, [{ preventScroll: true }]), JSON.stringify(focusCalls));
+	check("a click leaves the caret at the end of the draft", same(selectionCalls, ["remove", "add"]), JSON.stringify(selectionCalls));
 
 	check("the fetched answer is written to the persistent tier", storedEntries().includes("s1|2|"), JSON.stringify(storedEntries()));
 	const before = fetchCalls.length;
@@ -537,6 +619,80 @@ globalThis.fetch = async (url, init) => {
 	mountSeat(seat({ turn: 2, status: "closed" }, [1, 2], { seq: 901 }));
 	await flush();
 	check("a new closing sequence asks the Host again", fetchCalls.length === before + 1, `${fetchCalls.length} vs ${before + 1}`);
+}
+
+{
+	// The refresh button asks the Host for one fresh batch for this Turn. The stub
+	// answers a different batch on the second call, so the two are tellable apart.
+	fetchCalls.length = 0;
+	let batch = 0;
+	globalThis.fetch = async (url, init) => {
+		fetchCalls.push({ url, body: JSON.parse(init.body) });
+		batch += 1;
+		return {
+			ok: true,
+			json: async () => ({ items: batch % 2 === 1 ? ["第一批一", "第一批二"] : ["第二批一", "第二批二"] })
+		};
+	};
+	mountSeat(seat({ turn: 11, status: "closed" }, [11], { seq: 1100 }));
+	await flush();
+	check("the first batch is the one rendered", same(texts(seatHarness.getTree()).slice(1), ["第一批一", "第一批二"]), JSON.stringify(texts(seatHarness.getTree())));
+	const firstSeq = fetchCalls.at(-1)?.body?.seq;
+	const asks = fetchCalls.length;
+	const refreshButton = buttons(seatHarness.getTree())[0];
+	check("the refresh button is the label row's own button", refreshButton?.props?.className === "dshfu_refresh", String(refreshButton?.props?.className));
+	refreshButton.props.onClick();
+	await flush();
+	const refreshed = seatHarness.getTree();
+	check("a refresh renders the new batch", same(texts(refreshed).slice(1), ["第二批一", "第二批二"]), JSON.stringify(texts(refreshed)));
+	check("a refresh asks the Host exactly once", fetchCalls.length === asks + 1, `${fetchCalls.length} vs ${asks + 1}`);
+	check("a refresh carries the refresh flag", fetchCalls.at(-1)?.body?.refresh === true, JSON.stringify(fetchCalls.at(-1)?.body));
+	check("a refresh keeps the Turn", fetchCalls.at(-1)?.body?.turn === 11, String(fetchCalls.at(-1)?.body?.turn));
+	check("a refresh misses a Host without the flag", fetchCalls.at(-1)?.body?.seq !== firstSeq, `${String(fetchCalls.at(-1)?.body?.seq)} vs ${String(firstSeq)}`);
+	check("the refreshed batch replaces the cached one", JSON.parse(persistent.get("dsh.followupSuggestions.v1")).entries["s1|11|1100"]?.items?.join("|") === "第二批一|第二批二", JSON.stringify(JSON.parse(persistent.get("dsh.followupSuggestions.v1")).entries["s1|11|1100"]));
+	check("the in-flight marker is cleared once the refresh lands", buttons(refreshed)[0].props?.["data-busy"] === undefined && buttons(refreshed)[0].props?.disabled === false, JSON.stringify(buttons(refreshed)[0].props?.["data-busy"]));
+}
+
+{
+	// A refresh the Host cannot answer must not blank the row: the chips the user
+	// is reading stay, and so does the batch cached behind them.
+	fetchCalls.length = 0;
+	let batch = 0;
+	globalThis.fetch = async (url, init) => {
+		fetchCalls.push({ url, body: JSON.parse(init.body) });
+		batch += 1;
+		return {
+			ok: true,
+			json: async () => ({ items: batch === 1 ? ["第三批一"] : [] })
+		};
+	};
+	mountSeat(seat({ turn: 12, status: "closed" }, [12], { seq: 1200 }));
+	await flush();
+	buttons(seatHarness.getTree())[0].props.onClick();
+	await flush();
+	check("an empty refresh keeps the chips on screen", same(texts(seatHarness.getTree()).slice(1), ["第三批一"]), JSON.stringify(texts(seatHarness.getTree())));
+	check("an empty refresh keeps the cached batch", JSON.parse(persistent.get("dsh.followupSuggestions.v1")).entries["s1|12|1200"]?.items?.join("|") === "第三批一", "cache was overwritten");
+}
+
+{
+	// A refresh that fails outright behaves like an empty one.
+	fetchCalls.length = 0;
+	let batch = 0;
+	globalThis.fetch = async (url, init) => {
+		fetchCalls.push({ url, body: JSON.parse(init.body) });
+		batch += 1;
+		if (batch > 1) throw new Error("offline");
+		return {
+			ok: true,
+			json: async () => ({ items: ["第四批一"] })
+		};
+	};
+	mountSeat(seat({ turn: 13, status: "closed" }, [13], { seq: 1300 }));
+	await flush();
+	buttons(seatHarness.getTree())[0].props.onClick();
+	await flush();
+	check("a failed refresh keeps the chips on screen", same(texts(seatHarness.getTree()).slice(1), ["第四批一"]), JSON.stringify(texts(seatHarness.getTree())));
+	check("a failed refresh stops spinning", buttons(seatHarness.getTree())[0].props?.["data-busy"] === undefined, JSON.stringify(buttons(seatHarness.getTree())[0].props?.["data-busy"]));
 }
 
 {
@@ -579,8 +735,37 @@ globalThis.fetch = async (url, init) => {
 	await flush();
 	const tree = seatHarness.getTree();
 	check("a missing input seat still renders chips", tree !== null, String(tree));
-	buttons(tree)[0].props.onClick();
+	chips(tree)[0].props.onClick();
 	check("a click without the input seat is a no-op", draftCalls.length === 1, String(draftCalls.length));
+}
+
+{
+	// A plugin reload keeps the document's previous <style> tag, so a build whose
+	// rules changed must rewrite that tag — otherwise a new icon size or gap never
+	// reaches the page until a hard refresh. Runs last: it re-applies the plugin.
+	let styleText = "/* rules of a previous build */";
+	let styleWrites = 0;
+	let appended = 0;
+	const tag = { dataset: {} };
+	Object.defineProperty(tag, "textContent", {
+		get: () => styleText,
+		set: (next) => {
+			styleText = next;
+			styleWrites += 1;
+		}
+	});
+	globalThis.document = {
+		querySelector: () => tag,
+		createElement: () => ({ dataset: {} }),
+		head: { appendChild: () => {
+			appended += 1;
+		} }
+	};
+	clientModule.apply(clientCtx);
+	check("an injected stylesheet is rewritten when this build's rules differ", styleText.includes(".dshfu_head{display:flex;align-items:center;gap:8px}") && styleWrites === 1, `writes=${styleWrites}`);
+	check("the stale tag is reused instead of duplicated", appended === 0, String(appended));
+	clientModule.apply(clientCtx);
+	check("an already-current stylesheet is left alone", styleWrites === 1 && appended === 0, `writes=${styleWrites} appended=${appended}`);
 }
 
 //#endregion
