@@ -52,7 +52,33 @@ plugin_manager install_bundle target="github:YubaiLoving/dsh-followup-suggestion
       name: 'dsh-followup-suggestions'
 ```
 
+关于这条有两点要说。其一，包内自带 `cordis.patch.yml`（由 `package.json` 的 `dsh.bundle.patch` 声明），profile 走 bundle 机制时它已经会自动插入同样的一条，**不要**再加第二条。其二，上面这条插入行就够 Host/Client 两半加载了；另外再加一条同 id、不带 `insert` 的**顶层覆盖行**，作用只是让插件可被定位（因而能在插件页里开关）：
+
+```yaml
+- id: followup-suggestions
+  name: 'dsh-followup-suggestions'
+```
+
 保存后 DSH 会重新应用 patch 层：**浏览器半侧刷新页面即可**，**Host 半侧改代码需要重启 DSH**（已加载的模块在进程内被缓存）。但条目上的 `config` 改动会**即时重载**插件（实测：把 `maxItems` 改成 1，下一次请求就只返回 1 条）。刷新按钮不受这条限制：它同时也带一个 cache-missing 的合成 seq，所以哪怕 Host 还是旧版（没重启、不认识 `refresh` 标志），点刷新一样会真的重新生成。
+
+## 安装排错
+
+"气泡突然没了"几乎都是下面三种环境问题之一。它们都不是插件的 bug；而且**任何一个都会让整次 `pnpm install` 中止** —— 所以症状表现为插件悄无声息地不再出现，而不是界面上弹出报错。
+
+| 症状 | 原因 | 处理 |
+| --- | --- | --- |
+| `ERR_PNPM_FETCH_403`（`GET https://www.npmjs.com/package/<包名>`） | pnpm 11 会按供应链策略逐个复核 lockfile 条目，并去抓该包的 npm **网站**页面；这个请求可能被 403 拒绝，而 `registry.npmjs.org` 仍然返回 200 —— 属于代理或站点风控，与被装的包无关 | 跳过这一步重跑安装：`pnpm install --trust-lockfile`（实测：把一次硬失败变成数秒内成功） |
+| `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` | 同一 profile 里另一个依赖来自 git，需要执行构建脚本但不在白名单 | 按报错里给出的键，把该包加进 profile 的 `pnpm-workspace.yaml` 的 `allowBuilds`（形如 `'<包名>@<解析后的地址>': true`） |
+| 改了本插件源码，运行中的 DSH 行为却没变 | `file:` 依赖是被**复制**进 profile 而不是软链，安装那一刻的源码就被固定下来了 | 每次改完源码都要在 profile 目录重跑一次安装；若改的是 Host 半侧，还要再重启 DSH |
+
+安装中止**不会**拆掉原先能用的包，但这次要新增或要重链的那个包不会落地，所以插件可能在两次重启之间"消失"。排查前先确认实际装的是什么：
+
+```
+# Windows 路径示例，其他系统自行替换
+node -p "require('C:/Users/<你>/.dsh/profiles/desktop/node_modules/dsh-followup-suggestions/package.json').version"
+```
+
+再确认名册里还留着它：`~/.dsh/profiles/desktop/cordis.patch.yml` 里该 id 必须同时出现在 `insert` 列表和顶层覆盖行中。
 
 ## 配置（可选）
 

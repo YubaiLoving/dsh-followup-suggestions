@@ -52,7 +52,33 @@ The package directory must live under the profile's `node_modules`, with one Loa
       name: 'dsh-followup-suggestions'
 ```
 
+Two notes on that row. First, the package ships its own `cordis.patch.yml` (declared through `dsh.bundle.patch`); when your profile applies bundle patches, that file already inserts the identical row, so do **not** add a second one. Second, the row above is all the Host and Client halves need — a separate **top-level override** row with the same id and no `insert` is only what makes the plugin addressable (and therefore switchable) on the plugin page:
+
+```yaml
+- id: followup-suggestions
+  name: 'dsh-followup-suggestions'
+```
+
 DSH re-applies the patch layer in place: the **browser half needs a page refresh**, while the **Host half only picks up code changes after a DSH restart** (loaded modules are cached in the process). Changing the entry's `config`, however, **reloads the plugin immediately** (verified: setting `maxItems: 1` made the very next request return one chip). The refresh button is exempt from the restart rule: it also carries a cache-missing synthetic sequence, so pressing it regenerates for real even while the Host is still the older build that ignores `refresh`.
+
+## Install troubleshooting
+
+Three environment-level failures account for almost every "the chips are gone" report. None of them is a plugin bug, and any one of them aborts the whole `pnpm install` — which is why the symptom shows up as a plugin that silently stops appearing rather than as an error in the UI.
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `ERR_PNPM_FETCH_403` on `GET https://www.npmjs.com/package/<pkg>` | pnpm 11 re-verifies each lockfile entry against its supply-chain policy and fetches the npm **website** page for the package; that request can be refused with 403 while `registry.npmjs.org` still answers 200 — a proxy or bot-protection issue, not a problem with the package | rerun the install with the re-verification skipped: `pnpm install --trust-lockfile` (verified: turns a hard failure into a successful install in seconds) |
+| `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` | another dependency in the same profile comes from git and wants to run build scripts, but is not allowlisted | add that package to `allowBuilds` in the profile's `pnpm-workspace.yaml`, using the exact key the message prints (`'<name>@<resolved-url>': true`) |
+| You edited this plugin's source, but the running DSH still behaves the old way | a `file:` dependency is **copied** into the profile, not symlinked, so the install froze the source as it was at install time | rerun the install inside the profile directory after every source edit; a Host-half change additionally needs a DSH restart |
+
+An aborted install does not tear down what already worked — but the package being added or relinked never lands, so a plugin can disappear between two restarts. Check what is really installed before debugging anything else:
+
+```
+# Windows path shown; adapt to your OS
+node -p "require('C:/Users/<you>/.dsh/profiles/desktop/node_modules/dsh-followup-suggestions/package.json').version"
+```
+
+Then confirm the roster still carries the plugin (in `~/.dsh/profiles/desktop/cordis.patch.yml`, the id must be present both in the `insert` list and as a top-level row).
 
 ## Configuration (optional)
 
